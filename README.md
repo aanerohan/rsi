@@ -1,32 +1,21 @@
 # RSI — Runtime Self-Improvement
 
-Test-time self-improvement loop via critique-maintained memory and synthetic drills. No retries, no weight updates — improvement happens across tasks through a growing library of reusable fix patterns.
+An LLM solves coding tasks one at a time. After each attempt (pass or fail), a second LLM extracts a reusable fix pattern and stores it in memory. Future tasks see those patterns and can pull up the full details if they look relevant. No retries on the same task, no fine-tuning.
 
-## Architecture
+## How it works
 
 ```
-Task ──► Actor (LLM) ──► Evaluator (sandbox) ──► Critic (LLM) ──► Memory Store
-            ▲                                          │
-            └──────────── index.json ◄─────────────────┘
-                         (paragraphs)
+Task ──► Actor ──► Evaluator ──► Critic ──► Memory
+            ▲                                  │
+            └──────── index.json ◄─────────────┘
 ```
 
-**Actor** generates code conditioned on paragraph summaries of known fix patterns. Can call `read_bucket(id)` to fetch full details (playbook, drills, past code + traces) when a pattern looks relevant.
+- **Actor**: solves the task. Sees a short index of known fix patterns. Can call `read_bucket(id)` to get full details (playbook, actual past code, error traces) if something looks relevant.
+- **Evaluator**: runs code in a subprocess, returns pass/fail + tracebacks.
+- **Critic**: looks at the attempt, extracts a generalizable fix pattern, decides whether to merge it into an existing bucket or create a new one.
+- **Memory**: file-backed. `index.json` has paragraph summaries (small, always in context). `buckets/*.json` has the full content (loaded only when the Actor asks).
 
-**Evaluator** runs code in a sandboxed subprocess with timeout. Returns structured pass/fail + full error traces.
-
-**Critic** analyzes each attempt and produces a reusable addressable-fix abstraction: a summary paragraph, playbook, trigger signals, and synthetic drills. Decides whether to merge into an existing bucket or create a new one.
-
-**Memory Store** is file-backed (`memory/buckets/*.json` + `memory/index.json`). Two-layer design: index stays small (paragraph summaries); full bucket content (code, traces, playbook) is loaded on demand.
-
-## How It Works
-
-1. Each task gets **one attempt** (no retries).
-2. Actor sees the task + index of paragraph summaries.
-3. If a bucket looks relevant, Actor calls `read_bucket(id)` to get full content (playbook, past code, error traces).
-4. Actor generates code. Evaluator runs it.
-5. Critic analyzes the result (pass or fail), produces a fix abstraction, updates memory.
-6. Next task sees the updated index. Patterns carry over across tasks.
+The key idea: the index is cheap to keep in context. The heavy stuff (playbooks, full code, full traces) lives in buckets and only gets loaded via tool call when the Actor thinks it's useful.
 
 ## Setup
 
@@ -38,33 +27,33 @@ export OPENAI_API_KEY="sk-..."
 ## Usage
 
 ```bash
-# Full experiment: baseline (no memory) vs memory-enabled
+# baseline (no memory) vs memory-enabled, 20 HumanEval tasks
 python run.py --benchmark humaneval --limit 20
 
-# Use a different model
+# different models for actor and critic
 python run.py --actor-model gpt-4o-mini --critic-model gpt-4o --limit 10
 
-# Point to a local/custom API
+# local API
 python run.py --base-url http://localhost:8000/v1 --actor-model my-model
 
-# Verbose logging
+# verbose
 python run.py --limit 5 -v
 ```
 
-## Memory Layout
+## Memory layout
 
 ```
 memory/
-├── index.json            # Paragraph summaries (what the Actor always sees)
-├── addressables.jsonl    # Append-only event log
+├── index.json            # paragraph summaries (what the Actor always sees)
+├── addressables.jsonl    # append-only event log
 └── buckets/
-    └── <bucket_id>.json  # Full bucket: playbook, drills, episodes with code + traces
+    └── <id>.json         # full bucket: playbook, drills, episodes w/ code + traces
 ```
 
-## Key Concepts
+## Concepts
 
-- **Two-layer context**: Index (paragraph summaries, always in context) + Buckets (full content, loaded on demand via tool call). Context stays small.
-- **Addressable fix**: A reusable pattern (summary paragraph + playbook + trigger signals) extracted from a failure or success episode.
-- **Bucket**: A semantic container grouping equivalent fixes; merged by *fix equivalence*, not string matching. Stores full code and error traces from past episodes.
-- **Synthetic drills**: Generated mini-problems that exercise the same playbook with varied surface features.
-- **Cross-task learning**: No retries. Patterns from Task 1 help on Task 50 as the index grows.
+- **Bucket**: groups equivalent fixes. Merged by whether the same playbook would work, not by string matching. Stores full code and error traces.
+- **Index**: paragraph summaries of all buckets. Always in context. The Actor reads these to decide if anything is worth opening.
+- **Addressable fix**: the reusable pattern extracted from an episode — a summary, playbook steps, trigger signals.
+- **Synthetic drills**: small generated problems that target the same fix with different surface features.
+- **Cross-task**: one attempt per task, no retries. Patterns from early tasks help on later ones.
