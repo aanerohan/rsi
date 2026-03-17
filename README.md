@@ -1,4 +1,4 @@
-# RSI — Runtime Self-Improvement
+# RSI — Recusrive Self-Improvement
 
 An LLM solves coding tasks one at a time. After each attempt (pass or fail), a second LLM extracts a reusable fix pattern and stores it in memory. Future tasks see those patterns and can pull up the full details if they look relevant. No retries on the same task, no fine-tuning.
 
